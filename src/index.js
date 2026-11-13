@@ -39,10 +39,12 @@ function broadcastRoom(roomCode) {
 
   for (const id of room.players) {
     const client = clients.get(id);
-    if (client) send(client.socket, {
-      type: "players",
-      players
-    });
+    if (client) {
+      send(client.socket, {
+        type: "players",
+        players
+      });
+    }
   }
 }
 
@@ -63,14 +65,17 @@ function createRoomCode() {
 function leaveRoom(client) {
   if (!client.roomCode) return;
 
-  const room = rooms.get(client.roomCode);
+  const oldRoomCode = client.roomCode;
+  const room = rooms.get(oldRoomCode);
+
   if (room) {
     room.players.delete(client.id);
+    room.playerData.delete(client.id);
 
     if (room.players.size === 0) {
-      rooms.delete(client.roomCode);
+      rooms.delete(oldRoomCode);
     } else {
-      broadcastRoom(client.roomCode);
+      broadcastRoom(oldRoomCode);
     }
   }
 
@@ -96,13 +101,18 @@ wss.on("connection", socket => {
     try {
       data = JSON.parse(raw.toString());
     } catch {
-      return send(socket, { type: "error", message: "Invalid JSON" });
+      return send(socket, {
+        type: "error",
+        message: "Invalid JSON"
+      });
     }
 
     switch (data.type) {
       case "set_username": {
         if (typeof data.username !== "string") break;
+
         client.username = data.username.trim().slice(0, 24) || "Player";
+
         if (client.roomCode) broadcastRoom(client.roomCode);
         break;
       }
@@ -111,12 +121,19 @@ wss.on("connection", socket => {
         leaveRoom(client);
 
         const code = createRoomCode();
+
         rooms.set(code, {
-          players: new Set([id])
+          players: new Set([id]),
+          playerData: new Map()
         });
 
         client.roomCode = code;
-        send(socket, { type: "room_created", roomCode: code });
+
+        send(socket, {
+          type: "room_created",
+          roomCode: code
+        });
+
         broadcastRoom(code);
         break;
       }
@@ -126,18 +143,29 @@ wss.on("connection", socket => {
         const room = rooms.get(code);
 
         if (!room) {
-          return send(socket, { type: "error", message: "Room not found" });
+          return send(socket, {
+            type: "error",
+            message: "Room not found"
+          });
         }
 
         if (room.players.size >= MAX_PLAYERS_PER_ROOM) {
-          return send(socket, { type: "error", message: "Room is full" });
+          return send(socket, {
+            type: "error",
+            message: "Room is full"
+          });
         }
 
         leaveRoom(client);
+
         room.players.add(id);
         client.roomCode = code;
 
-        send(socket, { type: "room_joined", roomCode: code });
+        send(socket, {
+          type: "room_joined",
+          roomCode: code
+        });
+
         broadcastRoom(code);
         break;
       }
@@ -160,11 +188,45 @@ wss.on("connection", socket => {
           if (playerId === id) continue;
 
           const recipient = clients.get(playerId);
+
           if (recipient) {
             send(recipient.socket, {
               type: "message",
               sender: id,
               message: data.message
+            });
+          }
+        }
+        break;
+      }
+
+      // ROOMBASE SPACE
+      case "space_position": {
+        if (!client.roomCode) break;
+
+        const room = rooms.get(client.roomCode);
+        if (!room) break;
+
+        const x = Number(data.x);
+        const y = Number(data.y);
+
+        if (!Number.isFinite(x) || !Number.isFinite(y)) break;
+
+        // Save latest player position
+        room.playerData.set(id, { x, y });
+
+        // Send position to other players
+        for (const playerId of room.players) {
+          if (playerId === id) continue;
+
+          const recipient = clients.get(playerId);
+
+          if (recipient) {
+            send(recipient.socket, {
+              type: "space_position",
+              playerId: id,
+              x,
+              y
             });
           }
         }
