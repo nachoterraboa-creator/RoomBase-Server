@@ -1,6 +1,10 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
+import {
+  MAX_PLAYERS_PER_ROOM,
+  normalizeRoomCode
+} from "./rooms.js";
 
 const PORT = process.env.PORT || 10000;
 const HOST = "0.0.0.0";
@@ -118,14 +122,14 @@ wss.on("connection", socket => {
       }
 
       case "join_room": {
-        const code = String(data.roomCode || "").toUpperCase();
+        const code = normalizeRoomCode(data.roomCode);
         const room = rooms.get(code);
 
         if (!room) {
           return send(socket, { type: "error", message: "Room not found" });
         }
 
-        if (room.players.size >= 16) {
+        if (room.players.size >= MAX_PLAYERS_PER_ROOM) {
           return send(socket, { type: "error", message: "Room is full" });
         }
 
